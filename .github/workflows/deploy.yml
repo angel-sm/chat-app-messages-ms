@@ -93,15 +93,21 @@ jobs:
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
       
-    - name: Set output
-      id: set-docker-image
+    - name: Set docker image
+      id: build-image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        echo "image_docker=${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}" | tr -d '\n' >> $GITHUB_OUTPUT
-        cat $GITHUB_OUTPUT 
+        # First, construct the full image URI and store it in a variable
+        IMAGE_URI=$(echo "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}")
+        
+        # For debugging (optional)
+        echo "Generated image URI: $IMAGE_URI"
+        
+        # Write to GITHUB_OUTPUT with proper escaping
+        echo "image_docker=${IMAGE_URI}" >> ${GITHUB_OUTPUT}
 
   # Job 3: Deploy Lambda function
   deploy-lambda:
