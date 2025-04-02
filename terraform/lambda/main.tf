@@ -48,7 +48,7 @@ resource "aws_lambda_function" "app_lambda" {
   image_uri     = var.image_uri
 
   image_config {
-    command = ["app.handler"] # Adjust this to your handler
+    command = ["main.handler"] # Adjust this to your handler
   }
 
   environment {
