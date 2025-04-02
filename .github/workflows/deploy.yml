@@ -50,6 +50,11 @@ jobs:
           -var="aws_region=${{ secrets.AWS_REGION }}" \
           -var="ecr_repository_name=${{ secrets.ECR_REPOSITORY }}"
     
+    - name: Get Terraform outputs
+      id: tf-output
+      working-directory: ./terraform/ecr
+      run: |
+        echo "repository_url=$(terraform output -raw repository_url || echo '')" >> $GITHUB_OUTPUT
 
   # Job 2: Build and push Docker image
   build-and-push:
@@ -115,6 +120,35 @@ jobs:
       working-directory: ./terraform/lambda
       run: terraform init
     
+    - name: Check if Lambda resources exist
+      id: check-lambda
+      run: |
+        LAMBDA_EXISTS=$(aws lambda get-function --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }} --query 'Configuration.FunctionName' --output text 2>/dev/null || echo "NOT_FOUND")
+        ROLE_EXISTS=$(aws iam get-role --role-name ${{ secrets.LAMBDA_FUNCTION_NAME }}-role --query 'Role.RoleName' --output text 2>/dev/null || echo "NOT_FOUND")
+        
+        echo "lambda_exists=$LAMBDA_EXISTS" >> $GITHUB_OUTPUT
+        echo "role_exists=$ROLE_EXISTS" >> $GITHUB_OUTPUT
+    
+    - name: Import Lambda resources if they exist
+      working-directory: ./terraform/lambda
+      run: |
+        # Create a temporary tfvars file with required variables
+        echo "aws_region = \"${{ secrets.AWS_REGION }}\"" > temp.tfvars
+        echo "lambda_function_name = \"${{ secrets.LAMBDA_FUNCTION_NAME }}\"" >> temp.tfvars
+        echo "environment = \"${{ secrets.ENVIRONMENT }}\"" >> temp.tfvars
+        echo "image_uri = \"placeholder-image-uri\"" >> temp.tfvars
+        
+        if [ "${{ steps.check-lambda.outputs.role_exists }}" != "NOT_FOUND" ]; then
+          terraform import -var-file=temp.tfvars aws_iam_role.lambda_role ${{ secrets.LAMBDA_FUNCTION_NAME }}-role || echo "Import of IAM role failed, continuing anyway"
+        fi
+        
+        if [ "${{ steps.check-lambda.outputs.lambda_exists }}" != "NOT_FOUND" ]; then
+          terraform import -var-file=temp.tfvars aws_lambda_function.app_lambda ${{ secrets.LAMBDA_FUNCTION_NAME }} || echo "Import of Lambda function failed, continuing anyway"
+        fi
+        
+        # Clean up the temporary file
+        rm temp.tfvars
+    
     - name: Deploy Lambda function
       working-directory: ./terraform/lambda
       run: |
@@ -124,12 +158,11 @@ jobs:
           -var="environment=${{ secrets.ENVIRONMENT }}" \
           -var="image_uri=${{ needs.build-and-push.outputs.image_uri }}"
     
-    - name: Get Terraform outputs
+    - name: Get Lambda function name
       id: tf-output
       working-directory: ./terraform/lambda
       run: |
-        FUNCTION_NAME=$(terraform output -raw lambda_function_name)
-        echo "lambda_function_name=$FUNCTION_NAME" >> $GITHUB_OUTPUT
+        echo "lambda_function_name=$(terraform output -raw lambda_function_name || echo ${{ secrets.LAMBDA_FUNCTION_NAME }})" >> $GITHUB_OUTPUT
 
   # Job 4: Deploy API Gateway
   deploy-api-gateway:
@@ -167,10 +200,15 @@ jobs:
       working-directory: ./terraform/api-gateway
       if: steps.check-api.outputs.api_id != 'NOT_FOUND'
       run: |
-        terraform import aws_apigatewayv2_api.lambda_api ${{ steps.check-api.outputs.api_id }} || true
+        # Create a temporary tfvars file with required variables
+        echo "aws_region = \"${{ secrets.AWS_REGION }}\"" > temp.tfvars
+        echo "lambda_function_name = \"${{ secrets.LAMBDA_FUNCTION_NAME }}\"" >> temp.tfvars
+        echo "environment = \"${{ secrets.ENVIRONMENT }}\"" >> temp.tfvars
         
-        # You may need to import other resources like stages, routes, etc.
-        # This can get complex and might be better handled through careful state management
+        terraform import -var-file=temp.tfvars aws_apigatewayv2_api.lambda_api ${{ steps.check-api.outputs.api_id }} || echo "Import of API Gateway failed, continuing anyway"
+        
+        # Clean up the temporary file
+        rm temp.tfvars
     
     - name: Deploy API Gateway
       working-directory: ./terraform/api-gateway
@@ -183,4 +221,4 @@ jobs:
     - name: Display API Gateway URL
       working-directory: ./terraform/api-gateway
       run: |
-        echo "API Gateway URL: $(terraform output -raw api_gateway_url)"
+        echo "API Gateway URL: $(terraform output -raw api_gateway_url || echo 'Not available')"
