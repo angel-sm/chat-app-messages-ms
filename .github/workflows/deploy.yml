@@ -5,7 +5,162 @@ on:
     branches: [ ci-cd ]
 
 jobs:
-  build-and-deploy:
+  # Job 1: Deploy ECR Repository
+  deploy-ecr:
+    name: Deploy ECR Repository
+    runs-on: ubuntu-latest
+    outputs:
+      repository_url: ${{ steps.tf-output.outputs.repository_url }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.0.0
+    
+    - name: Terraform Init (ECR)
+      working-directory: ./terraform/ecr
+      run: terraform init
+    
+    - name: Check if ECR exists
+      id: check-ecr
+      run: |
+        ECR_EXISTS=$(aws ecr describe-repositories --repository-names ${{ secrets.ECR_REPOSITORY }} --query 'repositories[0].repositoryName' --output text 2>/dev/null || echo "NOT_FOUND")
+        echo "ecr_exists=$ECR_EXISTS" >> $GITHUB_OUTPUT
+    
+    - name: Import ECR if exists
+      working-directory: ./terraform/ecr
+      if: steps.check-ecr.outputs.ecr_exists != 'NOT_FOUND'
+      run: terraform import aws_ecr_repository.app_ecr_repo ${{ secrets.ECR_REPOSITORY }}
+    
+    - name: Deploy ECR Repository
+      working-directory: ./terraform/ecr
+      run: |
+        terraform apply -auto-approve \
+          -var="aws_region=${{ secrets.AWS_REGION }}" \
+          -var="ecr_repository_name=${{ secrets.ECR_REPOSITORY }}"
+    
+    - name: Get Terraform outputs
+      id: tf-output
+      working-directory: ./terraform/ecr
+      run: |
+        REPO_URL=$(terraform output -raw repository_url)
+        echo "repository_url=$REPO_URL" >> $GITHUB_OUTPUT
+
+  # Job 2: Build and push Docker image
+  build-and-push:
+    name: Build and push Docker image
+    needs: deploy-ecr
+    runs-on: ubuntu-latest
+    outputs:
+      image_uri: ${{ steps.build-image.outputs.image }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+    
+    - name: Build and push Docker image
+      id: build-image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./messages-service
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+  # Job 3: Deploy Lambda function
+  deploy-lambda:
+    name: Deploy Lambda function
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    outputs:
+      lambda_function_name: ${{ steps.tf-output.outputs.lambda_function_name }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.0.0
+    
+    - name: Terraform Init (Lambda)
+      working-directory: ./terraform/lambda
+      run: terraform init
+    
+    - name: Check if Lambda resources exist
+      id: check-lambda
+      run: |
+        LAMBDA_EXISTS=$(aws lambda get-function --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }} --query 'Configuration.FunctionName' --output text 2>/dev/null || echo "NOT_FOUND")
+        ROLE_EXISTS=$(aws iam get-role --role-name ${{ secrets.LAMBDA_FUNCTION_NAME }}-role --query 'Role.RoleName' --output text 2>/dev/null || echo "NOT_FOUND")
+        
+        echo "lambda_exists=$LAMBDA_EXISTS" >> $GITHUB_OUTPUT
+        echo "role_exists=$ROLE_EXISTS" >> $GITHUB_OUTPUT
+    
+    - name: Import Lambda resources if they exist
+      working-directory: ./terraform/lambda
+      run: |
+        if [ "${{ steps.check-lambda.outputs.role_exists }}" != "NOT_FOUND" ]; then
+          terraform import aws_iam_role.lambda_role ${{ secrets.LAMBDA_FUNCTION_NAME }}-role || true
+        fi
+        
+        if [ "${{ steps.check-lambda.outputs.lambda_exists }}" != "NOT_FOUND" ]; then
+          terraform import aws_lambda_function.app_lambda ${{ secrets.LAMBDA_FUNCTION_NAME }} || true
+        fi
+    
+    - name: Deploy Lambda function
+      working-directory: ./terraform/lambda
+      run: |
+        terraform apply -auto-approve \
+          -var="aws_region=${{ secrets.AWS_REGION }}" \
+          -var="lambda_function_name=${{ secrets.LAMBDA_FUNCTION_NAME }}" \
+          -var="environment=${{ secrets.ENVIRONMENT }}" \
+          -var="image_uri=${{ needs.build-and-push.outputs.image_uri }}"
+    
+    - name: Get Terraform outputs
+      id: tf-output
+      working-directory: ./terraform/lambda
+      run: |
+        FUNCTION_NAME=$(terraform output -raw lambda_function_name)
+        echo "lambda_function_name=$FUNCTION_NAME" >> $GITHUB_OUTPUT
+
+  # Job 4: Deploy API Gateway
+  deploy-api-gateway:
+    name: Deploy API Gateway
+    needs: deploy-lambda
     runs-on: ubuntu-latest
     
     steps:
@@ -18,52 +173,40 @@ jobs:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
-      
-    # Setup Terraform
+    
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: 1.0.0
-      
-    - name: Terraform Init
-      working-directory: ./terraform
+    
+    - name: Terraform Init (API Gateway)
+      working-directory: ./terraform/api-gateway
       run: terraform init
     
-    # Phase 1: Create infrastructure except Lambda deployment
-    - name: Create initial infrastructure
-      working-directory: ./terraform
+    - name: Check if API Gateway exists
+      id: check-api
       run: |
-        # Apply with a placeholder image to create ECR repository and roles
-        terraform apply -auto-approve \
-          -var="aws_region=${{ secrets.AWS_REGION }}" \
-          -var="ecr_repository_name=${{ secrets.ECR_REPOSITORY }}" \
-          -var="lambda_function_name=${{ secrets.LAMBDA_FUNCTION_NAME }}" \
-          -var="environment=${{ secrets.ENVIRONMENT }}" \
+        API_ID=$(aws apigatewayv2 get-apis --query "Items[?Name=='${{ secrets.LAMBDA_FUNCTION_NAME }}-gateway'].ApiId" --output text 2>/dev/null || echo "NOT_FOUND")
+        echo "api_id=$API_ID" >> $GITHUB_OUTPUT
     
-    # Phase 2: Build and push Docker image to already created ECR
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v1
-      
-    - name: Build, tag, and push Docker image to ECR
-      id: build-image
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-        IMAGE_TAG: latest
+    - name: Import API Gateway if exists
+      working-directory: ./terraform/api-gateway
+      if: steps.check-api.outputs.api_id != 'NOT_FOUND'
       run: |
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./messages-service
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-      
-    # Phase 3: Update Lambda with the real image
-    - name: Update Lambda with Docker image
-      working-directory: ./terraform
+        terraform import aws_apigatewayv2_api.lambda_api ${{ steps.check-api.outputs.api_id }} || true
+        
+        # You may need to import other resources like stages, routes, etc.
+        # This can get complex and might be better handled through careful state management
+    
+    - name: Deploy API Gateway
+      working-directory: ./terraform/api-gateway
       run: |
         terraform apply -auto-approve \
           -var="aws_region=${{ secrets.AWS_REGION }}" \
-          -var="ecr_repository_name=${{ secrets.ECR_REPOSITORY }}" \
           -var="lambda_function_name=${{ secrets.LAMBDA_FUNCTION_NAME }}" \
-          -var="environment=${{ secrets.ENVIRONMENT }}" \
-          -var="use_placeholder_image=false" \
-          -var="image_uri=${{ steps.build-image.outputs.image }}"
+          -var="environment=${{ secrets.ENVIRONMENT }}"
+    
+    - name: Display API Gateway URL
+      working-directory: ./terraform/api-gateway
+      run: |
+        echo "API Gateway URL: $(terraform output -raw api_gateway_url)"
