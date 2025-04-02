@@ -47,6 +47,10 @@ resource "aws_lambda_function" "app_lambda" {
   package_type  = "Image"
   image_uri     = var.image_uri
 
+  image_config {
+    command = ["app.handler"] # Adjust this to your handler
+  }
+
   environment {
     variables = {
       NODE_ENV = var.environment
@@ -60,6 +64,8 @@ resource "aws_lambda_function" "app_lambda" {
       reserved_concurrent_executions,
     ]
   }
+
+  depends_on = [aws_iam_role.lambda_role]
 }
 
 output "lambda_function_name" {
