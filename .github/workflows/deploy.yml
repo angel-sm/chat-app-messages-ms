@@ -115,26 +115,13 @@ jobs:
       working-directory: ./terraform/lambda
       run: terraform init
     
-    - name: Check if Lambda resources exist
-      id: check-lambda
-      run: |
-        LAMBDA_EXISTS=$(aws lambda get-function --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }} --query 'Configuration.FunctionName' --output text 2>/dev/null || echo "NOT_FOUND")
-        ROLE_EXISTS=$(aws iam get-role --role-name ${{ secrets.LAMBDA_FUNCTION_NAME }}-role --query 'Role.RoleName' --output text 2>/dev/null || echo "NOT_FOUND")
-        
-        echo "lambda_exists=$LAMBDA_EXISTS" >> $GITHUB_OUTPUT
-        echo "role_exists=$ROLE_EXISTS" >> $GITHUB_OUTPUT
-    
     - name: Import Lambda resources if they exist
       working-directory: ./terraform/lambda
+      continue-on-error: true
       run: |
-        if [ "${{ steps.check-lambda.outputs.role_exists }}" != "NOT_FOUND" ]; then
-          terraform import aws_iam_role.lambda_role ${{ secrets.LAMBDA_FUNCTION_NAME }}-role || true
-        fi
-        
-        if [ "${{ steps.check-lambda.outputs.lambda_exists }}" != "NOT_FOUND" ]; then
-          terraform import aws_lambda_function.app_lambda ${{ secrets.LAMBDA_FUNCTION_NAME }} || true
-        fi
-    
+        terraform import aws_iam_role.lambda_role ${{ secrets.LAMBDA_FUNCTION_NAME }}-role || true
+        terraform import aws_lambda_function.app_lambda ${{ secrets.LAMBDA_FUNCTION_NAME }} || true
+
     - name: Deploy Lambda function
       working-directory: ./terraform/lambda
       run: |
