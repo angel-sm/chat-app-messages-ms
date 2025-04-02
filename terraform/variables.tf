@@ -9,13 +9,13 @@ variable "aws_region" {
 variable "ecr_repository_name" {
   description = "Name of the ECR repository"
   type        = string
-  default     = "nestjs-microservice"
+  default     = "messages-service"
 }
 
 variable "lambda_function_name" {
   description = "Name of the Lambda function"
   type        = string
-  default     = "nestjs-microservice"
+  default     = "messages-service-fn"
 }
 
 variable "environment" {
