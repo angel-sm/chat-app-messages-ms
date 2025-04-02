@@ -5,7 +5,7 @@ provider "aws" {
 }
 
 # ECR Repository
-resource "aws_ecr_repository" "this" {
+resource "aws_ecr_repository" "app_ecr_repo" {
   name = var.ecr_repository_name
   
   # Prevent accidental deletion
@@ -18,7 +18,7 @@ resource "aws_ecr_repository" "this" {
 }
 
 output "repository_url" {
-  value = aws_ecr_repository.this.repository_url
+  value = aws_ecr_repository.app_ecr_repo.repository_url
 }
 
 output "repository_name" {

@@ -41,7 +41,7 @@ jobs:
     - name: Import ECR if exists
       working-directory: ./terraform/ecr
       if: steps.check-ecr.outputs.ecr_exists != 'NOT_FOUND'
-      run: terraform import aws_ecr_repository.this ${{ secrets.ECR_REPOSITORY }}
+      run: terraform import aws_ecr_repository.app_ecr_repo ${{ secrets.ECR_REPOSITORY }}
     
     - name: Deploy ECR Repository
       working-directory: ./terraform/ecr
