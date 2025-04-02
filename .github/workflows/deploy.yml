@@ -94,6 +94,13 @@ jobs:
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
+    - name: Set output
+      id: example
+      run: echo "my_value=hello-world" >> $GITHUB_OUTPUT
+    
+    - name: Use output
+      run: echo "The value is ${{ steps.example.outputs.my_value }}"
+
   # Job 3: Deploy Lambda function
   deploy-lambda:
     name: Deploy Lambda function
