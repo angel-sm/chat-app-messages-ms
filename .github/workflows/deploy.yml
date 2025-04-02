@@ -94,7 +94,7 @@ jobs:
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
       
     - name: Set docker image
-      id: build-image
+      id: set-docker-image-url
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
