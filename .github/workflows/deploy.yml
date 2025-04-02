@@ -1,0 +1,70 @@
+name: Deploy NestJS to AWS Lambda
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    # Setup Terraform
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.0.0
+    
+    - name: Terraform Init
+      working-directory: ./terraform
+      run: terraform init
+    
+    # Import existing resources into Terraform state
+    - name: Import existing resources
+      working-directory: ./terraform
+      continue-on-error: true
+      run: |
+        # Import ECR repository if it exists
+        terraform import aws_ecr_repository.app_ecr_repo ${{ secrets.ECR_REPOSITORY }} || true
+        
+        # Import IAM role if it exists
+        terraform import aws_iam_role.lambda_role ${{ secrets.LAMBDA_FUNCTION_NAME }}-role || true
+        
+        # Import Lambda function if it exists
+        terraform import aws_lambda_function.app_lambda ${{ secrets.LAMBDA_FUNCTION_NAME }} || true
+    
+    # Login to ECR and push the Docker image
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+    
+    - name: Build, tag, and push Docker image to ECR
+      id: build-image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+        IMAGE_TAG: latest
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./rooms-service
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+    
+    # Apply Terraform configuration (it will update existing resources rather than create new ones)
+    - name: Apply Terraform
+      working-directory: ./terraform
+      run: |
+        terraform apply -auto-approve \
+          -var="aws_region=${{ secrets.AWS_REGION }}" \
+          -var="ecr_repository_name=${{ secrets.ECR_REPOSITORY }}" \
+          -var="lambda_function_name=${{ secrets.LAMBDA_FUNCTION_NAME }}" \
+          -var="environment=${{ secrets.ENVIRONMENT }}"
