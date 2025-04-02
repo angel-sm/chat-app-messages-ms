@@ -64,7 +64,7 @@ jobs:
     needs: deploy-ecr
     runs-on: ubuntu-latest
     outputs:
-      image: ${{ steps.build-image.outputs.image }}
+      image: ${{ steps.build-image.outputs.image_docker }}
       saludo: ${{ steps.example.outputs.my_value }}
     
     steps:
@@ -93,7 +93,7 @@ jobs:
         docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+        echo "image_docker=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
     - name: Set output
       id: example
@@ -101,7 +101,7 @@ jobs:
     
     - name: Use output
       id: example2
-      run: echo "The value is ${{ steps.example.outputs.my_value }}"
+      run: echo "The value is ${{ steps.example.outputs.image }}"
 
   # Job 3: Deploy Lambda function
   deploy-lambda:
@@ -125,6 +125,10 @@ jobs:
     - name: Use output
       id: example2
       run: echo "The value is ${{ needs.build-and-push.outputs.saludo }}"
+
+    - name: Debug Image URI
+      run: |
+        echo "Image URI: ${{ needs.build-and-push.outputs.image }}"
     
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
@@ -163,10 +167,6 @@ jobs:
         
         # Clean up the temporary file
         rm temp.tfvars
-
-    - name: Debug Image URI
-      run: |
-        echo "Image URI: ${{ needs.build-and-push.outputs.image }}"
     
     - name: Deploy Lambda function
       working-directory: ./terraform/lambda
