@@ -63,8 +63,6 @@ jobs:
     name: Build and push Docker image
     needs: deploy-ecr
     runs-on: ubuntu-latest
-    outputs:
-      image_docker: ${{ steps.set-docker-image.outputs.image_docker }}
     
     steps:
     - name: Checkout code
@@ -92,6 +90,7 @@ jobs:
         docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+  
 
   # Job 3: Deploy Lambda function
   deploy-lambda:
@@ -112,22 +111,6 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
     
-    - name: Set~ docker image
-      id: set-docker-image-url
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-        IMAGE_TAG: ${{ github.sha }}
-      run: |
-        # First, construct the full image URI and store it in a variable
-        IMAGE_URI=$(echo "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}")
-        
-        # For debugging (optional)
-        echo "Generated image URI: $IMAGE_URI"
-        
-        # Write to GITHUB_OUTPUT with proper escaping
-        echo "image_docker=${IMAGE_URI}" >> ${GITHUB_OUTPUT}
-
     - name: Construct Image URI
       id: construct-uri
       run: |
@@ -141,7 +124,7 @@ jobs:
         
         # Set as output
         echo "image_uri=${IMAGE_URI}" >> $GITHUB_OUTPUT
-    
+
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
       with:
@@ -178,7 +161,6 @@ jobs:
         fi
         
         # Clean up the temporary file
-        
         rm temp.tfvars
     
     - name: Deploy Lambda function
@@ -189,7 +171,7 @@ jobs:
           -var="lambda_function_name=${{ secrets.LAMBDA_FUNCTION_NAME }}" \
           -var="environment=${{ secrets.ENVIRONMENT }}" \
           -var="image_uri=${{ steps.construct-uri.outputs.image_uri }}"
-    
+
     - name: Get Lambda function name
       id: tf-output
       working-directory: ./terraform/lambda
