@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.build-image.outputs.image }}
-      saludo: ${{ steps.build-image.outputs.saludo }}
+      saludo: ${{ steps.example.outputs.my_value }}
     
     steps:
     - name: Checkout code
@@ -94,7 +94,14 @@ jobs:
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-        echo "my_value=hello-world" >> $GITHUB_OUTPUT
+
+    - name: Set output
+      id: example
+      run: echo "my_value=hello-world" >> $GITHUB_OUTPUT
+    
+    - name: Use output
+      id: example2
+      run: echo "The value is ${{ steps.example.outputs.my_value }}"
 
   # Job 3: Deploy Lambda function
   deploy-lambda:
@@ -114,10 +121,10 @@ jobs:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
-      
+
     - name: Use output
       id: example2
-      run: echo "The value is ${{ needs.build-and-push.outputs.my_value }}"
+      run: echo "The value is ${{ needs.build-and-push.outputs.saludo }}"
     
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
