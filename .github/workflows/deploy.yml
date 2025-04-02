@@ -11,43 +11,67 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
-    
+      
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
-    
+      
     # Setup Terraform
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: 1.0.0
-    
+      
     - name: Terraform Init
       working-directory: ./terraform
       run: terraform init
     
+    # Check if resources exist before importing
+    - name: Check if resources exist
+      id: check-resources
+      working-directory: ./terraform
+      run: |
+        # Check if ECR repository exists
+        ECR_EXISTS=$(aws ecr describe-repositories --repository-names ${{ secrets.ECR_REPOSITORY }} --query 'repositories[0].repositoryName' --output text 2>/dev/null || echo "NOT_FOUND")
+        
+        # Check if Lambda function exists
+        LAMBDA_EXISTS=$(aws lambda get-function --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }} --query 'Configuration.FunctionName' --output text 2>/dev/null || echo "NOT_FOUND")
+        
+        # Check if IAM role exists
+        ROLE_EXISTS=$(aws iam get-role --role-name ${{ secrets.LAMBDA_FUNCTION_NAME }}-role --query 'Role.RoleName' --output text 2>/dev/null || echo "NOT_FOUND")
+        
+        # Set outputs for later steps
+        echo "ecr_exists=$ECR_EXISTS" >> $GITHUB_OUTPUT
+        echo "lambda_exists=$LAMBDA_EXISTS" >> $GITHUB_OUTPUT
+        echo "role_exists=$ROLE_EXISTS" >> $GITHUB_OUTPUT
+    
     # Import existing resources into Terraform state
     - name: Import existing resources
       working-directory: ./terraform
-      continue-on-error: true
       run: |
         # Import ECR repository if it exists
-        terraform import aws_ecr_repository.app_ecr_repo ${{ secrets.ECR_REPOSITORY }} || true
+        if [ "${{ steps.check-resources.outputs.ecr_exists }}" != "NOT_FOUND" ]; then
+          terraform import aws_ecr_repository.app_ecr_repo ${{ secrets.ECR_REPOSITORY }}
+        fi
         
         # Import IAM role if it exists
-        terraform import aws_iam_role.lambda_role ${{ secrets.LAMBDA_FUNCTION_NAME }}-role || true
+        if [ "${{ steps.check-resources.outputs.role_exists }}" != "NOT_FOUND" ]; then
+          terraform import aws_iam_role.lambda_role ${{ secrets.LAMBDA_FUNCTION_NAME }}-role
+        fi
         
         # Import Lambda function if it exists
-        terraform import aws_lambda_function.app_lambda ${{ secrets.LAMBDA_FUNCTION_NAME }} || true
+        if [ "${{ steps.check-resources.outputs.lambda_exists }}" != "NOT_FOUND" ]; then
+          terraform import aws_lambda_function.app_lambda ${{ secrets.LAMBDA_FUNCTION_NAME }}
+        fi
     
     # Login to ECR and push the Docker image
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
-    
+      
     - name: Build, tag, and push Docker image to ECR
       id: build-image
       env:
@@ -57,9 +81,9 @@ jobs:
       run: |
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./messages-service
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        echo "image=$ECR_REGISTRY/$ECRLAMBDA_FUNCTION_NAME_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-    
-    # Apply Terraform configuration (it will update existing resources rather than create new ones)
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+      
+    # Apply Terraform configuration
     - name: Apply Terraform
       working-directory: ./terraform
       run: |
@@ -67,4 +91,5 @@ jobs:
           -var="aws_region=${{ secrets.AWS_REGION }}" \
           -var="ecr_repository_name=${{ secrets.ECR_REPOSITORY }}" \
           -var="lambda_function_name=${{ secrets.LAMBDA_FUNCTION_NAME }}" \
-          -var="environment=${{ secrets.ENVIRONMENT }}"
+          -var="environment=${{ secrets.ENVIRONMENT }}" \
+          -var="image_uri=${{ steps.build-image.outputs.image }}"
