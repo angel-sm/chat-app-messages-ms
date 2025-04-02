@@ -54,7 +54,8 @@ jobs:
       id: tf-output
       working-directory: ./terraform/ecr
       run: |
-        echo "repository_url=$(terraform output -raw repository_url || echo '')" >> $GITHUB_OUTPUT
+        REPO_URL=$(terraform output -json | jq -r '.repository_url.value' || echo '')
+        echo "repository_url=${REPO_URL}" >> ${GITHUB_OUTPUT}
 
   # Job 2: Build and push Docker image
   build-and-push:
