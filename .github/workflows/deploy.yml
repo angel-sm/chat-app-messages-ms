@@ -50,12 +50,6 @@ jobs:
           -var="aws_region=${{ secrets.AWS_REGION }}" \
           -var="ecr_repository_name=${{ secrets.ECR_REPOSITORY }}"
     
-    - name: Get Terraform outputs
-      id: tf-output
-      working-directory: ./terraform/ecr
-      run: |
-        REPO_URL=$(terraform output -raw repository_url)
-        echo "repository_url=${REPO_URL}" >> ${GITHUB_OUTPUT}
 
   # Job 2: Build and push Docker image
   build-and-push:
