@@ -1,1 +1,3 @@
-# chat-app-messages-ms
+# chat-app-messages-ms 
+
+Messages microservice
