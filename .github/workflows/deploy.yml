@@ -100,7 +100,7 @@ jobs:
         ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        echo "image_docker=Hello world" >> $GITHUB_OUTPUT
+        echo "image_docker=${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}" | tr -d '\n' >> $GITHUB_OUTPUT
         cat $GITHUB_OUTPUT 
 
   # Job 3: Deploy Lambda function
