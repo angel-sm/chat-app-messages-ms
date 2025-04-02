@@ -151,6 +151,10 @@ jobs:
         
         # Clean up the temporary file
         rm temp.tfvars
+
+    - name: Debug Image URI
+      run: |
+        echo "Image URI: ${{ needs.build-and-push.outputs.image_uri }}"
     
     - name: Deploy Lambda function
       working-directory: ./terraform/lambda
