@@ -39,7 +39,6 @@ jobs:
           -var="ecr_repository_name=${{ secrets.ECR_REPOSITORY }}" \
           -var="lambda_function_name=${{ secrets.LAMBDA_FUNCTION_NAME }}" \
           -var="environment=${{ secrets.ENVIRONMENT }}" \
-          -var="use_placeholder_image=true"
     
     # Phase 2: Build and push Docker image to already created ECR
     - name: Login to Amazon ECR
