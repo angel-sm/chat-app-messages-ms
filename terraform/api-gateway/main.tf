@@ -49,6 +49,11 @@ resource "aws_lambda_permission" "api_gateway" {
   function_name = data.aws_lambda_function.existing_lambda.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
+  
+  depends_on = [
+    aws_apigatewayv2_stage.lambda_stage,
+    aws_apigatewayv2_route.lambda_route
+  ]
 }
 
 output "api_gateway_url" {

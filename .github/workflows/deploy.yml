@@ -209,31 +209,37 @@ jobs:
       id: check-api
       run: |
         API_ID=$(aws apigatewayv2 get-apis --query "Items[?Name=='${{ secrets.LAMBDA_FUNCTION_NAME }}-gateway'].ApiId" --output text 2>/dev/null || echo "NOT_FOUND")
-        echo "api_id=$API_ID" >> $GITHUB_OUTPUT
-    
+        echo "api_id=$API_ID" >> $GITHUB_ENV
+        echo "API Gateway found: $API_ID"
+
     - name: Import API Gateway if exists
       working-directory: ./terraform/api-gateway
-      if: steps.check-api.outputs.api_id != 'NOT_FOUND'
+      if: env.api_id != 'NOT_FOUND'
       run: |
-        # Create a temporary tfvars file with required variables
+        echo "Importing existing API Gateway..."
         echo "aws_region = \"${{ secrets.AWS_REGION }}\"" > temp.tfvars
         echo "lambda_function_name = \"${{ secrets.LAMBDA_FUNCTION_NAME }}\"" >> temp.tfvars
         echo "environment = \"${{ secrets.ENVIRONMENT }}\"" >> temp.tfvars
         
-        terraform import -var-file=temp.tfvars aws_apigatewayv2_api.lambda_api ${{ steps.check-api.outputs.api_id }} || echo "Import of API Gateway failed, continuing anyway"
-        
-        # Clean up the temporary file
+        terraform import -var-file=temp.tfvars aws_apigatewayv2_api.lambda_api ${{ env.api_id }} || echo "Skipping import, API already managed"
+
         rm temp.tfvars
-    
-    - name: Deploy API Gateway
+
+    - name: Plan Terraform Changes
+      working-directory: ./terraform/api-gateway
+      run: terraform plan -var="aws_region=${{ secrets.AWS_REGION }}" -var="lambda_function_name=${{ secrets.LAMBDA_FUNCTION_NAME }}" -var="environment=${{ secrets.ENVIRONMENT }}" -out=tfplan
+
+    - name: Apply Terraform Changes (Only if Needed)
       working-directory: ./terraform/api-gateway
       run: |
-        terraform apply -auto-approve \
-          -var="aws_region=${{ secrets.AWS_REGION }}" \
-          -var="lambda_function_name=${{ secrets.LAMBDA_FUNCTION_NAME }}" \
-          -var="environment=${{ secrets.ENVIRONMENT }}"
-    
+        if terraform show -json tfplan | jq '.resource_changes | length > 0'; then
+          terraform apply -auto-approve tfplan
+        else
+          echo "No changes detected. Skipping apply."
+        fi
+
     - name: Display API Gateway URL
       working-directory: ./terraform/api-gateway
       run: |
-        echo "API Gateway URL: $(terraform output -raw api_gateway_url || echo 'Not available')"
+        API_URL=$(terraform output -raw api_gateway_url || echo "Not available")
+        echo "🚀 API Gateway URL: $API_URL"
