@@ -29,44 +29,6 @@ jobs:
       working-directory: ./terraform
       run: terraform init
     
-    # Check if resources exist before importing
-    - name: Check if resources exist
-      id: check-resources
-      working-directory: ./terraform
-      run: |
-        # Check if ECR repository exists
-        ECR_EXISTS=$(aws ecr describe-repositories --repository-names ${{ secrets.ECR_REPOSITORY }} --query 'repositories[0].repositoryName' --output text 2>/dev/null || echo "NOT_FOUND")
-        
-        # Check if Lambda function exists
-        LAMBDA_EXISTS=$(aws lambda get-function --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }} --query 'Configuration.FunctionName' --output text 2>/dev/null || echo "NOT_FOUND")
-        
-        # Check if IAM role exists
-        ROLE_EXISTS=$(aws iam get-role --role-name ${{ secrets.LAMBDA_FUNCTION_NAME }}-role --query 'Role.RoleName' --output text 2>/dev/null || echo "NOT_FOUND")
-        
-        # Set outputs for later steps
-        echo "ecr_exists=$ECR_EXISTS" >> $GITHUB_OUTPUT
-        echo "lambda_exists=$LAMBDA_EXISTS" >> $GITHUB_OUTPUT
-        echo "role_exists=$ROLE_EXISTS" >> $GITHUB_OUTPUT
-    
-    # Import existing resources into Terraform state
-    - name: Import existing resources
-      working-directory: ./terraform
-      run: |
-        # Import ECR repository if it exists
-        if [ "${{ steps.check-resources.outputs.ecr_exists }}" != "NOT_FOUND" ]; then
-          terraform import aws_ecr_repository.app_ecr_repo ${{ secrets.ECR_REPOSITORY }}
-        fi
-        
-        # Import IAM role if it exists
-        if [ "${{ steps.check-resources.outputs.role_exists }}" != "NOT_FOUND" ]; then
-          terraform import aws_iam_role.lambda_role ${{ secrets.LAMBDA_FUNCTION_NAME }}-role
-        fi
-        
-        # Import Lambda function if it exists
-        if [ "${{ steps.check-resources.outputs.lambda_exists }}" != "NOT_FOUND" ]; then
-          terraform import aws_lambda_function.app_lambda ${{ secrets.LAMBDA_FUNCTION_NAME }}
-        fi
-    
     # Phase 1: Create infrastructure except Lambda deployment
     - name: Create initial infrastructure
       working-directory: ./terraform
