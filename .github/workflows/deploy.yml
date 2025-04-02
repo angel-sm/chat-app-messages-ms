@@ -64,8 +64,7 @@ jobs:
     needs: deploy-ecr
     runs-on: ubuntu-latest
     outputs:
-      image: ${{ steps.build-image.outputs.image_docker }}
-      saludo: ${{ steps.example.outputs.my_value }}
+      image: ${{ steps.set-docker-image.outputs.image_docker }}
     
     steps:
     - name: Checkout code
@@ -93,10 +92,9 @@ jobs:
         docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        echo "image_docker=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-
+      
     - name: Set output
-      id: example
+      id: set-docker-image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
@@ -125,10 +123,6 @@ jobs:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
-
-    - name: Use output
-      id: example2
-      run: echo "The value is ${{ needs.build-and-push.outputs.saludo }}"
 
     - name: Debug Image URI
       run: |
