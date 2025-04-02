@@ -54,6 +54,7 @@ jobs:
       id: tf-output
       working-directory: ./terraform/ecr
       run: |
+        sudo apt-get update -y && sudo apt-get install -y jq
         REPO_URL=$(terraform output -json | jq -r '.repository_url.value' || echo '')
         echo "repository_url=${REPO_URL}" >> ${GITHUB_OUTPUT}
 
