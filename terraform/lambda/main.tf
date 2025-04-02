@@ -45,8 +45,8 @@ resource "aws_lambda_function" "app_lambda" {
   timeout       = 30
   memory_size   = 512
   package_type  = "Image"
-  image_uri     = var.image_uri
-
+  image_uri     = "${aws_ecr_repository.app_ecr_repo.repository_url}:latest"
+  
   image_config {
     command = ["app.handler"] # Adjust this to your handler
   }
