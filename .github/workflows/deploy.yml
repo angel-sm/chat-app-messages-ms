@@ -64,7 +64,7 @@ jobs:
     needs: deploy-ecr
     runs-on: ubuntu-latest
     outputs:
-      image: ${{ steps.set-docker-image.outputs.image_docker }}
+      image_docker: ${{ steps.set-docker-image.outputs.image_docker }}
     
     steps:
     - name: Checkout code
@@ -103,7 +103,7 @@ jobs:
 
     - name: Use output
       id: example2
-      run: echo "The value is ${{ steps.example.outputs.image_docker }}"
+      run: echo "The value is ${{ steps.set-docker-image.outputs.image_docker }}"
 
   # Job 3: Deploy Lambda function
   deploy-lambda:
@@ -126,7 +126,7 @@ jobs:
 
     - name: Debug Image URI
       run: |
-        echo "Image URI: ${{ needs.build-and-push.outputs.image }}"
+        echo "Image URI: ${{ needs.build-and-push.outputs.image_docker }}"
     
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
@@ -173,7 +173,7 @@ jobs:
           -var="aws_region=${{ secrets.AWS_REGION }}" \
           -var="lambda_function_name=${{ secrets.LAMBDA_FUNCTION_NAME }}" \
           -var="environment=${{ secrets.ENVIRONMENT }}" \
-          -var="image_uri=${{ needs.build-and-push.outputs.image }}"
+          -var="image_uri=${{ needs.build-and-push.outputs.image_docker }}"
     
     - name: Get Lambda function name
       id: tf-output
