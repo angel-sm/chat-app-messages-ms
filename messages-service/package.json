@@ -12,21 +12,17 @@
   "dependencies": {
     "@middy/core": "^6.1.6",
     "@middy/http-router": "^6.1.6",
+    "@prisma/client": "^6.5.0",
     "aws-lambda": "^1.0.7",
-    "compression": "^1.8.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
-    "express": "^5.1.0",
     "helmet": "^8.1.0",
-    "morgan": "^1.10.0",
-    "winston": "^3.17.0"
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.148",
-    "@types/compression": "^1.7.5",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.1",
-    "@types/morgan": "^1.9.9",
     "@types/node": "^22.13.17",
     "@typescript-eslint/eslint-plugin": "^8.29.0",
     "@typescript-eslint/parser": "^8.29.0",
@@ -34,6 +30,7 @@
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-prettier": "^5.2.5",
     "prettier": "^3.5.3",
+    "prisma": "^6.5.0",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.8.2"
   }
