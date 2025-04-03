@@ -1,0 +1,16 @@
+# Archivos de configuración local y credenciales
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+terraform.tfstate.d/
+
+# Archivos generados por Terraform
+.crash/
+.terraform/
+.terraform.lock.hcl
+.plan
+*.out
+
+# Archivos de salida de ejecución de Terraform
+*.log

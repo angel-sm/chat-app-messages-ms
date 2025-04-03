@@ -1,0 +1,245 @@
+name: Deploy NestJS to AWS Lambda
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  # Job 1: Deploy ECR Repository
+  deploy-ecr:
+    name: Deploy ECR Repository
+    runs-on: ubuntu-latest
+    outputs:
+      repository_url: ${{ steps.tf-output.outputs.repository_url }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.0.0
+    
+    - name: Terraform Init (ECR)
+      working-directory: ./terraform/ecr
+      run: terraform init
+    
+    - name: Check if ECR exists
+      id: check-ecr
+      run: |
+        ECR_EXISTS=$(aws ecr describe-repositories --repository-names ${{ secrets.ECR_REPOSITORY }} --query 'repositories[0].repositoryName' --output text 2>/dev/null || echo "NOT_FOUND")
+        echo "ecr_exists=$ECR_EXISTS" >> $GITHUB_OUTPUT
+    
+    - name: Import ECR if exists
+      working-directory: ./terraform/ecr
+      if: steps.check-ecr.outputs.ecr_exists != 'NOT_FOUND'
+      run: terraform import aws_ecr_repository.app_ecr_repo ${{ secrets.ECR_REPOSITORY }}
+    
+    - name: Deploy ECR Repository
+      working-directory: ./terraform/ecr
+      run: |
+        terraform apply -auto-approve \
+          -var="aws_region=${{ secrets.AWS_REGION }}" \
+          -var="ecr_repository_name=${{ secrets.ECR_REPOSITORY }}"
+    
+    - name: Get Terraform outputs
+      id: tf-output
+      working-directory: ./terraform/ecr
+      run: |
+        sudo apt-get update -y && sudo apt-get install -y jq
+        REPO_URL=$(terraform output -json | jq -r '.repository_url.value' || echo '')
+        echo "repository_url=${REPO_URL}" >> ${GITHUB_OUTPUT}
+
+  # Job 2: Build and push Docker image
+  build-and-push:
+    name: Build and push Docker image
+    needs: deploy-ecr
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+    
+    - name: Build and push Docker image
+      id: build-image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./messages-service
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+  
+
+  # Job 3: Deploy Lambda function
+  deploy-lambda:
+    name: Deploy Lambda function
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    outputs:
+      lambda_function_name: ${{ steps.tf-output.outputs.lambda_function_name }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    - name: Construct Image URI
+      id: construct-uri
+      run: |
+        # Get AWS account ID
+        AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+        
+        # Construct the ECR URI
+        IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}"
+        
+        echo "Constructed Image URI: ${IMAGE_URI}"
+        
+        # Set as output
+        echo "image_uri=${IMAGE_URI}" >> $GITHUB_OUTPUT
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.0.0
+    
+    - name: Terraform Init (Lambda)
+      working-directory: ./terraform/lambda
+      run: terraform init
+    
+    - name: Check if Lambda resources exist
+      id: check-lambda
+      run: |
+        LAMBDA_EXISTS=$(aws lambda get-function --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }} --query 'Configuration.FunctionName' --output text 2>/dev/null || echo "NOT_FOUND")
+        ROLE_EXISTS=$(aws iam get-role --role-name ${{ secrets.LAMBDA_FUNCTION_NAME }}-role --query 'Role.RoleName' --output text 2>/dev/null || echo "NOT_FOUND")
+        
+        echo "lambda_exists=$LAMBDA_EXISTS" >> $GITHUB_OUTPUT
+        echo "role_exists=$ROLE_EXISTS" >> $GITHUB_OUTPUT
+    
+    - name: Import Lambda resources if they exist
+      working-directory: ./terraform/lambda
+      run: |
+        # Create a temporary tfvars file with required variables
+        echo "aws_region = \"${{ secrets.AWS_REGION }}\"" > temp.tfvars
+        echo "lambda_function_name = \"${{ secrets.LAMBDA_FUNCTION_NAME }}\"" >> temp.tfvars
+        echo "environment = \"${{ secrets.ENVIRONMENT }}\"" >> temp.tfvars
+        echo "image_uri = \"placeholder-image-uri\"" >> temp.tfvars
+        
+        if [ "${{ steps.check-lambda.outputs.role_exists }}" != "NOT_FOUND" ]; then
+          terraform import -var-file=temp.tfvars aws_iam_role.lambda_role ${{ secrets.LAMBDA_FUNCTION_NAME }}-role || echo "Import of IAM role failed, continuing anyway"
+        fi
+        
+        if [ "${{ steps.check-lambda.outputs.lambda_exists }}" != "NOT_FOUND" ]; then
+          terraform import -var-file=temp.tfvars aws_lambda_function.app_lambda ${{ secrets.LAMBDA_FUNCTION_NAME }} || echo "Import of Lambda function failed, continuing anyway"
+        fi
+        
+        # Clean up the temporary file
+        rm temp.tfvars
+    
+    - name: Deploy Lambda function
+      working-directory: ./terraform/lambda
+      run: |
+        terraform apply -auto-approve \
+          -var="aws_region=${{ secrets.AWS_REGION }}" \
+          -var="lambda_function_name=${{ secrets.LAMBDA_FUNCTION_NAME }}" \
+          -var="environment=${{ secrets.ENVIRONMENT }}" \
+          -var="image_uri=${{ steps.construct-uri.outputs.image_uri }}"
+
+    - name: Get Lambda function name
+      id: tf-output
+      working-directory: ./terraform/lambda
+      run: |
+        sudo apt-get update -y && sudo apt-get install -y jq
+        echo "lambda_function_name=$(terraform output json | jq -r 'lambda_function_name.value' || echo ${{ secrets.LAMBDA_FUNCTION_NAME }})" >> $GITHUB_OUTPUT
+
+  # Job 4: Deploy API Gateway
+  deploy-api-gateway:
+    name: Deploy API Gateway
+    needs: deploy-lambda
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.0.0
+    
+    - name: Terraform Init (API Gateway)
+      working-directory: ./terraform/api-gateway
+      run: terraform init
+    
+    - name: Check if API Gateway exists
+      id: check-api
+      run: |
+        API_ID=$(aws apigatewayv2 get-apis --query "Items[?Name=='${{ secrets.LAMBDA_FUNCTION_NAME }}-gateway'].ApiId" --output text 2>/dev/null || echo "NOT_FOUND")
+        echo "api_id=$API_ID" >> $GITHUB_ENV
+        echo "API Gateway found: $API_ID"
+
+    - name: Import API Gateway if exists
+      working-directory: ./terraform/api-gateway
+      if: env.api_id != 'NOT_FOUND'
+      run: |
+        echo "Importing existing API Gateway..."
+        echo "aws_region = \"${{ secrets.AWS_REGION }}\"" > temp.tfvars
+        echo "lambda_function_name = \"${{ secrets.LAMBDA_FUNCTION_NAME }}\"" >> temp.tfvars
+        echo "environment = \"${{ secrets.ENVIRONMENT }}\"" >> temp.tfvars
+        
+        terraform import -var-file=temp.tfvars aws_apigatewayv2_api.lambda_api ${{ env.api_id }} || echo "Skipping import, API already managed"
+
+        rm temp.tfvars
+
+    - name: Plan Terraform Changes
+      working-directory: ./terraform/api-gateway
+      run: terraform plan -var="aws_region=${{ secrets.AWS_REGION }}" -var="lambda_function_name=${{ secrets.LAMBDA_FUNCTION_NAME }}" -var="environment=${{ secrets.ENVIRONMENT }}" -out=tfplan
+
+    - name: Apply Terraform Changes (Only if Needed)
+      working-directory: ./terraform/api-gateway
+      run: |
+        if terraform show -json tfplan | jq '.resource_changes | length > 0'; then
+          terraform apply -auto-approve tfplan
+        else
+          echo "No changes detected. Skipping apply."
+        fi
+
+    - name: Display API Gateway URL
+      working-directory: ./terraform/api-gateway
+      run: |
+        API_URL=$(terraform output -raw api_gateway_url || echo "Not available")
+        echo "🚀 API Gateway URL: $API_URL"
